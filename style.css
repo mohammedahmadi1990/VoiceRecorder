@@ -1,0 +1,28 @@
+.header{
+    text-align: center; padding-top: 50px;
+}
+
+.container{
+    text-align: center
+}
+
+.timer{
+    margin: 70px 0px 0px 0px
+}
+
+.playing{
+    background-color: green;
+}
+
+.splittedList{
+    margin: 50px 50px 100px 100px
+}
+
+.splittedItem{
+    display: flex; justify-content: space-between
+}
+
+.spacer{
+    margin-right: 10px;
+}
+

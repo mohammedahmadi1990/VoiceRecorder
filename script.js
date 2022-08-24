@@ -1,18 +1,28 @@
-var startButton = document.getElementById("startButton");
-var stopButton = document.getElementById("stopButton");
+const startButton = document.getElementById("startButton");
+const stopButton = document.getElementById("stopButton");
+const playButton = document.createElement("playButton");
+const downloadButton = document.createElement("downloadButton");
+const timerLabel = document.getElementById("timerLabel");
 
-var leftchannel = [];
-var rightchannel = [];
-var recorder = null;
-var recordingLength = 0;
-var volume = null;
-var mediaStream = null;
-var sampleRate = 44100;
-var context = null;
-var blob = null;
+let leftchannel = [];
+let rightchannel = [];
+let recorder = null;
+let recordingLength = 0;
+let volume = null;
+let mediaStream = null;
+let sampleRate = 44100;
+let context = null;
+let blob = null;
+let timer = 0;
+let seconds = 0;
+let mins = 0;
+let hours = 0;
 
-startButton.addEventListener("click", function () {
-  // Initialize recorder
+startButton.addEventListener("click", () => {
+  startButton.classList.toggle("disabled");
+  stopButton.classList.toggle("disabled");
+
+  timer = setInterval(timerStarter, 1000); //start Timer
   navigator.getUserMedia =
     navigator.getUserMedia ||
     navigator.webkitGetUserMedia ||
@@ -26,9 +36,10 @@ startButton.addEventListener("click", function () {
       window.AudioContext = window.AudioContext || window.webkitAudioContext;
       context = new AudioContext();
       mediaStream = context.createMediaStreamSource(e);
-      var bufferSize = 2048;
-      var numberOfInputChannels = 2;
-      var numberOfOutputChannels = 2;
+
+      let bufferSize = 2048;
+      let numberOfInputChannels = 2;
+      let numberOfOutputChannels = 2;
       if (context.createScriptProcessor) {
         recorder = context.createScriptProcessor(
           bufferSize,
@@ -48,6 +59,7 @@ startButton.addEventListener("click", function () {
         rightchannel.push(new Float32Array(e.inputBuffer.getChannelData(1)));
         recordingLength += bufferSize;
       };
+
       mediaStream.connect(recorder);
       recorder.connect(context.destination);
     },
@@ -57,28 +69,24 @@ startButton.addEventListener("click", function () {
   );
 });
 
-stopButton.addEventListener("click", function () {
+stopButton.addEventListener("click", () => {
+  stopButton.classList.toggle("disabled");
+  startButton.classList.toggle("disabled");
+
+  clearInterval(timer); //STOP TIMER
   recorder.disconnect(context.destination);
   mediaStream.disconnect(recorder);
 
-  // we flat the left and right channels down
-  // Float32Array[] => Float32Array
-  var leftBuffer = flattenArray(leftchannel, recordingLength);
-  var rightBuffer = flattenArray(rightchannel, recordingLength);
-  console.log(rightBuffer);
-  // we interleave both channels together
-  // [left[0],right[0],left[1],right[1],...]
-  var interleaved = interleave(leftBuffer, rightBuffer);
+  let leftBuffer = flattenArray(leftchannel, recordingLength);
+  let rightBuffer = flattenArray(rightchannel, recordingLength);
+  let interleaved = interleave(leftBuffer, rightBuffer);
+  let buffer = new ArrayBuffer(44 + interleaved.length * 2);
+  let view = new DataView(buffer);
 
-  // we create our wav file
-  var buffer = new ArrayBuffer(44 + interleaved.length * 2);
-  var view = new DataView(buffer);
-
-  // RIFF chunk descriptor
   writeUTFBytes(view, 0, "RIFF");
   view.setUint32(4, 44 + interleaved.length * 2, true);
   writeUTFBytes(view, 8, "WAVE");
-  // FMT sub-chunk
+
   writeUTFBytes(view, 12, "fmt ");
   view.setUint32(16, 16, true); // chunkSize
   view.setUint16(20, 1, true); // wFormatTag
@@ -87,64 +95,116 @@ stopButton.addEventListener("click", function () {
   view.setUint32(28, sampleRate * 4, true); // dwAvgBytesPerSec
   view.setUint16(32, 4, true); // wBlockAlign
   view.setUint16(34, 16, true); // wBitsPerSample
-  // data sub-chunk
+
   writeUTFBytes(view, 36, "data");
   view.setUint32(40, interleaved.length * 2, true);
 
-  // write the PCM samples
-  var index = 44;
-  var volume = 1;
-  for (var i = 0; i < interleaved.length; i++) {
+  // PCM samples
+  let index = 44;
+  let volume = 1;
+  let avgx = 0;
+  for (let i = 0; i < interleaved.length; i++) {
     view.setInt16(index, interleaved[i] * (0x7fff * volume), true);
+    avgx += interleaved[i];
+    console.log(interleaved[i]);
     index += 2;
   }
+  // console.log(avgx);
 
-  // our final blob
+  // final blob
   blob = new Blob([view], { type: "audio/wav" });
 
-  // Save Audio
+  // Download + Play
   if (blob == null) {
     return;
   }
-  var url = URL.createObjectURL(blob);
-  var a = document.createElement("a");
-  document.body.appendChild(a);
-  a.style = "display: none";
-  a.href = url;
-  a.download = "sample.wav";
-  a.click();
-  //   window.URL.revokeObjectURL(url);
-  console.log(blob.text());
-  // Split
+  let url = URL.createObjectURL(blob);
+  trackCount = 1;
+
+  for (let i = 0; i < trackCount; i++) {
+    const a = document.createElement("a");
+    a.classList = "list-group-item list-group-item-action splittedItem";
+    a.textContent = `Track ${i + 1}`;
+
+    const div = document.createElement("div");
+    div.classList = "SplitControls";
+
+    const downloadButton = document.createElement("button");
+    downloadButton.type = "button";
+    downloadButton.classList = "btn btn-outline-light btn-sm spacer";
+    const downloadLink = document.createElement("a");
+    downloadLink.href = url;
+    downloadLink.textContent = "";
+    downloadLink.download = "sample.wav";
+    downloadLink.style = "text-decoration:none;";
+    downloadButton.appendChild(downloadLink);
+
+    const playButton = document.createElement("button");
+    playButton.type = "button";
+    playButton.classList = "btn btn-outline-light btn-sm spacer";
+    let audio = new Audio(url);
+    audio.id = `audio`;
+    playButton.appendChild(audio);
+    const playLink = document.createElement("a");
+    playLink.textContent = "⏵";
+    playLink.style = "text-decoration:none;";
+    playLink.onclick = () => {
+      audio.play();
+    };
+    playButton.appendChild(playLink);
+
+    div.appendChild(downloadButton);
+    div.appendChild(playButton);
+    a.appendChild(div);
+    document.getElementById("soundTracks").appendChild(a);
+  }
 });
 
-function flattenArray(channelBuffer, recordingLength) {
-  var result = new Float32Array(recordingLength);
-  var offset = 0;
-  for (var i = 0; i < channelBuffer.length; i++) {
-    var buffer = channelBuffer[i];
+const flattenArray = (channelBuffer, recordingLength) => {
+  let result = new Float32Array(recordingLength);
+  let offset = 0;
+  for (let i = 0; i < channelBuffer.length; i++) {
+    let buffer = channelBuffer[i];
     result.set(buffer, offset);
     offset += buffer.length;
   }
   return result;
-}
+};
 
-function interleave(leftChannel, rightChannel) {
-  var length = leftChannel.length + rightChannel.length;
-  var result = new Float32Array(length);
+const interleave = (leftChannel, rightChannel) => {
+  let length = leftChannel.length + rightChannel.length;
+  let result = new Float32Array(length);
 
-  var inputIndex = 0;
+  let inputIndex = 0;
 
-  for (var index = 0; index < length; ) {
+  for (let index = 0; index < length; ) {
     result[index++] = leftChannel[inputIndex];
     result[index++] = rightChannel[inputIndex];
     inputIndex++;
   }
   return result;
-}
+};
 
-function writeUTFBytes(view, offset, string) {
-  for (var i = 0; i < string.length; i++) {
+const writeUTFBytes = (view, offset, string) => {
+  for (let i = 0; i < string.length; i++) {
     view.setUint8(offset + i, string.charCodeAt(i));
   }
-}
+};
+
+const timerStarter = () => {
+  ++seconds;
+
+  tLabel = "";
+  if (seconds > 59) {
+    seconds = 0;
+    mins++;
+    if (mins > 59) {
+      mins = 0;
+      hours++;
+    }
+  }
+
+  timerLabel.innerHTML = `${hours < 10 ? "0" + hours : hours}:${
+    mins < 10 ? "0" + mins : mins
+  }:${seconds < 10 ? "0" + seconds : seconds}`;
+};
