@@ -102,14 +102,28 @@ stopButton.addEventListener("click", () => {
   // PCM samples
   let index = 44;
   let volume = 1;
-  let avgx = 0;
+
+  let sec12 = interleaved.length / (seconds + mins * 60 + hours * 3600);
+  let sec15 = interleaved.length / (seconds + mins * 60 + hours * 3600);
+  let treshold = 0.003;
+  let interleaves = [];
+  let temp = [];
+  let j = 1;
+  for (let i = 0; i < interleaved.length; i++) {
+    if (i >= sec12 * j && i <= sec15 * j && interleaved[i] <= treshold) {
+      interleaves.push(temp);
+      j++;
+      temp = [];
+    }
+    temp.push(interleaved[i]);
+  }
+
+  console.log(interleaves);
+
   for (let i = 0; i < interleaved.length; i++) {
     view.setInt16(index, interleaved[i] * (0x7fff * volume), true);
-    avgx += interleaved[i];
-    console.log(interleaved[i]);
     index += 2;
   }
-  // console.log(avgx);
 
   // final blob
   blob = new Blob([view], { type: "audio/wav" });
