@@ -80,65 +80,110 @@ stopButton.addEventListener("click", () => {
   let leftBuffer = flattenArray(leftchannel, recordingLength);
   let rightBuffer = flattenArray(rightchannel, recordingLength);
   let interleaved = interleave(leftBuffer, rightBuffer);
-  let buffer = new ArrayBuffer(44 + interleaved.length * 2);
-  let view = new DataView(buffer);
 
-  writeUTFBytes(view, 0, "RIFF");
-  view.setUint32(4, 44 + interleaved.length * 2, true);
-  writeUTFBytes(view, 8, "WAVE");
+  let duration = seconds + mins * 60 + hours * 3600;
+  let sec1 = 12 * (interleaved.length / duration); // Approximate start interval ~ 12s
+  let sec2 = 15 * (interleaved.length / duration); // Approximate stop interval ~ 15s
+  let silenceInterval = 1; // Minimum duration of silence
+  let frame = Math.ceil(silenceInterval * (interleaved.length / duration));
 
-  writeUTFBytes(view, 12, "fmt ");
-  view.setUint32(16, 16, true); // chunkSize
-  view.setUint16(20, 1, true); // wFormatTag
-  view.setUint16(22, 2, true); // wChannels: stereo (2 channels)
-  view.setUint32(24, sampleRate, true); // dwSamplesPerSec
-  view.setUint32(28, sampleRate * 4, true); // dwAvgBytesPerSec
-  view.setUint16(32, 4, true); // wBlockAlign
-  view.setUint16(34, 16, true); // wBitsPerSample
-
-  writeUTFBytes(view, 36, "data");
-  view.setUint32(40, interleaved.length * 2, true);
-
-  // PCM samples
-  let index = 44;
-  let volume = 1;
-
-  let sec12 = interleaved.length / (seconds + mins * 60 + hours * 3600);
-  let sec15 = interleaved.length / (seconds + mins * 60 + hours * 3600);
-  let treshold = 0.003;
   let interleaves = [];
   let temp = [];
-  let j = 1;
-  for (let i = 0; i < interleaved.length; i++) {
-    if (i >= sec12 * j && i <= sec15 * j && interleaved[i] <= treshold) {
-      interleaves.push(temp);
-      j++;
-      temp = [];
+  let silenceStart = [];
+  let silenceMid = [];
+  let silenceEnd = [];
+  let sCounter = -1;
+  let from = 0;
+  let to = frame;
+  let pushflag = false;
+
+  while (to < interleaved.length) {
+    let section = interleaved.slice(from, to);
+    let varr = calculateVariance(section);
+
+    if (varr < 0.0000026) {
+      // console.log(
+      //   `var = ${varr} silence detected at from=${Math.floor(
+      //     duration * (from / interleaved.length)
+      //   )}, to=${Math.floor(duration * (to / interleaved.length))}`
+      // )
+      sCounter++;
+      silenceStart[sCounter] = from;
+      silenceMid[sCounter] = Math.floor(from + to / 2);
+      silenceEnd[sCounter] = to;
     }
-    temp.push(interleaved[i]);
+    from += frame + 1;
+    to += frame + 1;
   }
 
-  console.log(interleaves);
-
+  sCounter = 0;
+  let j = 0;
   for (let i = 0; i < interleaved.length; i++) {
-    view.setInt16(index, interleaved[i] * (0x7fff * volume), true);
-    index += 2;
+    if (i % Math.floor(sec2) == 0) {
+      j++;
+    }
+    if (i >= sec1 * j && i <= sec2 * j) {
+      for (let k = 0; k < silenceStart.length; k++) {
+        if (i > silenceStart[k] && i < silenceEnd[k]) {
+          if (pushflag) {
+            sCounter++;
+            interleaves.push(temp);
+            temp = [];
+            pushflag = false;
+          }
+        }
+      }
+    } else {
+      pushflag = true;
+      temp.push(interleaved[i]);
+    }
+  }
+  if (temp.length > 0) {
+    interleaves.push(temp);
+    temp = [];
   }
 
-  // final blob
-  blob = new Blob([view], { type: "audio/wav" });
+  interleaves.forEach((interleaveI, ii) => {
+    let buffer = new ArrayBuffer(44 + interleaveI.length * 2);
+    let view = new DataView(buffer);
 
-  // Download + Play
-  if (blob == null) {
-    return;
-  }
-  let url = URL.createObjectURL(blob);
-  trackCount = 1;
+    writeUTFBytes(view, 0, "RIFF");
+    view.setUint32(4, 44 + interleaveI.length * 2, true);
+    writeUTFBytes(view, 8, "WAVE");
 
-  for (let i = 0; i < trackCount; i++) {
+    writeUTFBytes(view, 12, "fmt ");
+    view.setUint32(16, 16, true); // chunkSize
+    view.setUint16(20, 1, true); // wFormatTag
+    view.setUint16(22, 2, true); // wChannels: stereo (2 channels)
+    view.setUint32(24, sampleRate, true); // dwSamplesPerSec
+    view.setUint32(28, sampleRate * 4, true); // dwAvgBytesPerSec
+    view.setUint16(32, 4, true); // wBlockAlign
+    view.setUint16(34, 16, true); // wBitsPerSample
+
+    writeUTFBytes(view, 36, "data");
+    view.setUint32(40, interleaveI.length * 2, true);
+
+    // PCM samples
+    let index = 44;
+    let volume = 1;
+
+    for (let i = 0; i < interleaveI.length; i++) {
+      view.setInt16(index, interleaveI[i] * (0x7fff * volume), true);
+      index += 2;
+    }
+
+    // final blob
+    blob = new Blob([view], { type: "audio/mp3" });
+
+    // Download + Play Buttons in the track list
+    if (blob == null) {
+      return;
+    }
+    let url = URL.createObjectURL(blob);
+
     const a = document.createElement("a");
     a.classList = "list-group-item list-group-item-action splittedItem";
-    a.textContent = `Track ${i + 1}`;
+    a.textContent = `Track ${ii + 1 > 9 ? ii : "0" + (ii + 1)}`;
 
     const div = document.createElement("div");
     div.classList = "SplitControls";
@@ -149,7 +194,7 @@ stopButton.addEventListener("click", () => {
     const downloadLink = document.createElement("a");
     downloadLink.href = url;
     downloadLink.textContent = "";
-    downloadLink.download = "sample.wav";
+    downloadLink.download = `Track${ii + 1 > 9 ? ii : "0" + (ii + 1)}.mp3`;
     downloadLink.style = "text-decoration:none;";
     downloadButton.appendChild(downloadLink);
 
@@ -171,7 +216,7 @@ stopButton.addEventListener("click", () => {
     div.appendChild(playButton);
     a.appendChild(div);
     document.getElementById("soundTracks").appendChild(a);
-  }
+  });
 });
 
 const flattenArray = (channelBuffer, recordingLength) => {
@@ -185,6 +230,7 @@ const flattenArray = (channelBuffer, recordingLength) => {
   return result;
 };
 
+// Interleave left & right channels
 const interleave = (leftChannel, rightChannel) => {
   let length = leftChannel.length + rightChannel.length;
   let result = new Float32Array(length);
@@ -199,16 +245,17 @@ const interleave = (leftChannel, rightChannel) => {
   return result;
 };
 
+// Write as byte
 const writeUTFBytes = (view, offset, string) => {
   for (let i = 0; i < string.length; i++) {
     view.setUint8(offset + i, string.charCodeAt(i));
   }
 };
 
+// Timer
 const timerStarter = () => {
   ++seconds;
 
-  tLabel = "";
   if (seconds > 59) {
     seconds = 0;
     mins++;
@@ -221,4 +268,26 @@ const timerStarter = () => {
   timerLabel.innerHTML = `${hours < 10 ? "0" + hours : hours}:${
     mins < 10 ? "0" + mins : mins
   }:${seconds < 10 ? "0" + seconds : seconds}`;
+};
+
+// Calculate the average of all the numbers
+const calculateMean = (values) => {
+  const mean = values.reduce((sum, current) => sum + current) / values.length;
+  return mean;
+};
+
+// Calculate variance
+const calculateVariance = (values) => {
+  const average = calculateMean(values);
+  const squareDiffs = values.map((value) => {
+    const diff = value - average;
+    return diff * diff;
+  });
+  const variance = calculateMean(squareDiffs);
+  return variance;
+};
+
+// Calculate stand deviation
+const calculateSD = (values) => {
+  return Math.sqrt(calculateVariance(values));
 };
