@@ -1,3 +1,6 @@
+const maximumTrackLength = 15; // max time for tracks ~ 15s
+const varTreshold = 0.0000026; // treshold of variance of amplitude
+
 const startButton = document.getElementById("startButton");
 const stopButton = document.getElementById("stopButton");
 const playButton = document.createElement("playButton");
@@ -82,65 +85,74 @@ stopButton.addEventListener("click", () => {
   let interleaved = interleave(leftBuffer, rightBuffer);
 
   let duration = seconds + mins * 60 + hours * 3600;
-  let sec1 = 12 * (interleaved.length / duration); // Approximate start interval ~ 12s
-  let sec2 = 15 * (interleaved.length / duration); // Approximate stop interval ~ 15s
+  let maxSec = (maximumTrackLength - 1) * (interleaved.length / duration);
   let silenceInterval = 1; // Minimum duration of silence
   let frame = Math.ceil(silenceInterval * (interleaved.length / duration));
 
   let interleaves = [];
-  let temp = [];
   let silenceStart = [];
-  let silenceMid = [];
   let silenceEnd = [];
   let sCounter = -1;
   let from = 0;
   let to = frame;
-  let pushflag = false;
+  let prevTo = 101;
 
   while (to < interleaved.length) {
     let section = interleaved.slice(from, to);
     let varr = calculateVariance(section);
 
-    if (varr < 0.0000026) {
-      // console.log(
-      //   `var = ${varr} silence detected at from=${Math.floor(
-      //     duration * (from / interleaved.length)
-      //   )}, to=${Math.floor(duration * (to / interleaved.length))}`
-      // )
-      sCounter++;
-      silenceStart[sCounter] = from;
-      silenceMid[sCounter] = Math.floor(from + to / 2);
-      silenceEnd[sCounter] = to;
+    if (varr < varTreshold) {
+      if (from - prevTo <= 100) {
+        silenceEnd[sCounter] = to;
+        prevTo = to;
+      } else {
+        sCounter++;
+        silenceStart[sCounter] = from;
+        silenceEnd[sCounter] = to;
+        prevTo = to;
+      }
     }
     from += frame + 1;
     to += frame + 1;
   }
 
-  sCounter = 0;
+  // Detected Silence Status
+  for (let is = 0; is < silenceStart.length; is++) {
+    console.log(
+      `Silence ${is + 1} detected from: ${Math.floor(
+        duration * (silenceStart[is] / interleaved.length)
+      )} to: ${Math.floor(duration * (silenceEnd[is] / interleaved.length))}`
+    );
+  }
+
   let j = 0;
-  for (let i = 0; i < interleaved.length; i++) {
-    if (i % Math.floor(sec2) == 0) {
-      j++;
-    }
-    if (i >= sec1 * j && i <= sec2 * j) {
-      for (let k = 0; k < silenceStart.length; k++) {
-        if (i > silenceStart[k] && i < silenceEnd[k]) {
-          if (pushflag) {
-            sCounter++;
-            interleaves.push(temp);
-            temp = [];
-            pushflag = false;
-          }
-        }
+  let finalFlag = false;
+  let tmp = [];
+  tmp.push(interleaved[0]);
+  for (let is = 1; is < interleaved.length; is++) {
+    if (is == silenceStart[j]) {
+      if (tmp.length != 0) {
+        interleaves.push(tmp);
+        tmp = [];
+        finalFlag = false;
+      }
+      is = Math.floor(silenceEnd[j]) + 1;
+      if (silenceStart.length > j) {
+        j++;
       }
     } else {
-      pushflag = true;
-      temp.push(interleaved[i]);
+      if (tmp.length <= maxSec) {
+        tmp.push(interleaved[is]);
+        finalFlag = true;
+      } else {
+        interleaves.push(tmp);
+        tmp = [];
+        finalFlag = false;
+      }
     }
   }
-  if (temp.length > 0) {
-    interleaves.push(temp);
-    temp = [];
+  if (finalFlag) {
+    interleaves.push(tmp);
   }
 
   interleaves.forEach((interleaveI, ii) => {
